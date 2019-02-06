@@ -250,9 +250,14 @@ void (*orig_exit_group)(int);
  * Don't forget to call the original exit_group.
  */
 void my_exit_group(int status)
-{
-
-
+{	
+	
+	spin_lock(&pidlist_lock);
+	// remove that pid from all lists.
+	del_pid(current->pid);
+	spin_unlock(&pidlist_lock);
+	// use help function orig_exit_group to shore the original exit group.
+	orig_exit_group(status);
 
 }
 //----------------------------------------------------------------
@@ -281,12 +286,22 @@ asmlinkage long interceptor(struct pt_regs reg) {
 	int syscall = reg.ax;
 
 	// check if the syscall is being monitored for the current->pid
-	if (table[syscall].monitored == 0){
+
+
+	// only want syscall to log a message when a certain set of processes are calling. we want to 
+	// monitor a set of PIDs for the system call
+
+
+	if (table[syscall].monitored == 1){
 		// the pid is not monitored, log the message.
-		log_message(current-pid, syscall, reg.bx, reg.cx, reg.dx, reg.si, reg.di, reg.bp);
-	} 
+		if(check_pid_monitored(syscall, current->pid) == 1){
+			log_message(current->pid, syscall, reg.bx, reg.cx, reg.dx, reg.si, reg.di, reg.bp);
+		}
+	} else if (table[syscall].monitored == 2){
+		log_message(current->pid, syscall, reg.bx, reg.cx, reg.dx, reg.si, reg.di, reg.bp);
+	}
 	
-	return 0;
+	return table[reg.ax].f(reg);
 }
 
 /**
@@ -492,11 +507,31 @@ long (*orig_custom_syscall)(void);
  * - Ensure synchronization as needed.
  */
 static int init_function(void) {
+	// index for loop through table.
+	int index;
+	// // save the original syscall and exit group.
+	// orig_custom_syscall = sys_call_table[MY_CUSTOM_SYSCALL];
+	// orig_exit_group = sys_call_table[__NR_exit_group];
 
+	spin_lock(&calltable_lock);
+	spin_lock(&pidlist_lock);
+	set_addr_rw((unsigned long)sys_call_table);
+	orig_custom_syscall = sys_call_table[MY_CUSTOM_SYSCALL];
+	orig_exit_group = sys_call_table[__NR_exit_group];
 
+	sys_call_table[MY_CUSTOM_SYSCALL] = &my_syscall;
+	sys_call_table[__NR_exit_group] = &my_exit_group;
+	set_addr_ro((unsigned long)sys_call_table);
 
+	for(index = 0; index < NR_syscalls; index++){
+		table[index].intercepted = 0;
+		table[index].monitored = 0;
+		table[index].listcount = 0;
+		INIT_LIST_HEAD (&table[i].my_list);
+	}
 
-
+	spin_unlock(&pidlist_lock);
+	spin_unlock(&calltable_lock);
 
 
 	return 0;
@@ -513,12 +548,21 @@ static int init_function(void) {
  * - Ensure synchronization, if needed.
  */
 static void exit_function(void)
-{        
+{   
+	int index;
 
+	spin_lock(&calltable_lock);
+	set_addr_rw((unsigned long)sys_call_table);     
+	// Restore MY_CUSTOM_SYSCALL to the original syscall.
+ 	// Restore __NR_exit_group to its original syscall.
 
-
-
-
+	sys_call_table[MY_CUSTOM_SYSCALL] = orig_custom_syscall;
+	sys_call_table[__NR_exit_group] = orig_exit_group;
+	for(index = 0; index< NR_syscalls; index++){
+		destroy_list(index);
+	}
+	set_addr_ro((unsigned long)sys_call_table);
+	spin_unlock(&calltable_lock);
 
 }
 
