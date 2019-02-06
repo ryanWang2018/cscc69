@@ -1,20 +1,3 @@
-#include <linux/kernel.h>
-#include <linux/init.h>
-#include <linux/module.h>
-#include <asm/current.h>
-#include <asm/ptrace.h>
-#include <linux/sched.h>
-#include <linux/cred.h>
-#include <asm/unistd.h>
-#include <linux/spinlock.h>
-#include <linux/semaphore.h>
-#include <linux/syscalls.h>
-#include "interceptor.h"
-
-
-MODULE_DESCRIPTION("My kernel module");
-MODULE_AUTHOR("Me");
-MODULE_LICENSE("GPL");
 
 //----- System Call Table Stuff ------------------------------------
 /* Symbol that allows access to the kernel system call table */
@@ -357,7 +340,7 @@ asmlinkage long interceptor(struct pt_regs reg) {
 
 asmlinkage long my_syscall(int cmd, int syscall, int pid) {
 
-	if(cmd <0 || syscall < 0 || pid < 0 || syscall > NR_syscalls || syscall == MY_CUSTOM_SYSCALL){
+	if(cmd <0 || syscall < 0 || syscall > NR_syscalls || syscall == MY_CUSTOM_SYSCALL){
 		return -EINVAL;
 	}
 
@@ -384,12 +367,12 @@ asmlinkage long my_syscall(int cmd, int syscall, int pid) {
 			return -EBUSY;
 		}
 
-		spin_lock(&pidlist_spinlock);
+		spin_lock(&pidlist_lock);
 		if(add_pid_sysc(pid, syscall) != 0 ){
-			spin_unlock(&pidlist_spinlock);
+			spin_unlock(&pidlist_lock);
 			return -ENOMEM;
 		}
-		spin_unlock(&pidlist_spinlock);
+		spin_unlock(&pidlist_lock);
 
 		return 0;
 	}else if(cmd == REQUEST_STOP_MONITORING){
@@ -404,9 +387,9 @@ asmlinkage long my_syscall(int cmd, int syscall, int pid) {
 			if(current_uid() != 0){
 				return -EPERM;
 			} else {
-				spin_lock(&pidlist_spinlock);
+				spin_lock(&pidlist_lock);
 				destroy_list(syscall);
-				spin_unlock(&pidlist_spinlock);
+				spin_unlock(&pidlist_lock);
 				return 0;
 			}
 			// not zero, then it must belong to same owner
@@ -418,12 +401,12 @@ asmlinkage long my_syscall(int cmd, int syscall, int pid) {
 			if (check_pid_monitored(syscall, pid) == 0){
 				return -EINVAL;
 			}
-			spin_lock(&pidlist_spinlock);
+			spin_lock(&pidlist_lock);
 			if(del_pid_sysc(pid, syscall) != 0){
-				spin_unlock(&pidlist_spinlock);
+				spin_unlock(&pidlist_lock);
 				return -EINVAL;
 			}
-			spin_unlock(&pidlist_spinlock);
+			spin_unlock(&pidlist_spin);
 			return 0;
 		} 
 
@@ -437,7 +420,7 @@ asmlinkage long my_syscall(int cmd, int syscall, int pid) {
 			return -EBUSY;
 		}
 
-		spinlock(&calltable_lock);
+		spin_lock(&calltable_lock);
 		set_addr_rw((unsigned long)sys_call_table);
 		table[syscall].intercepted = 1;
 		table[syscall].f = sys_call_table[syscall];
@@ -457,7 +440,7 @@ asmlinkage long my_syscall(int cmd, int syscall, int pid) {
 			return -EINVAL;
 		}
 
-		spinlock(&calltable_lock);
+		spin_lock(&calltable_lock);
 		set_addr_rw((unsigned long)sys_call_table);
 		table[syscall].intercepted = 0;
 		table[syscall].f = sys_call_table[syscall];
@@ -527,7 +510,7 @@ static int init_function(void) {
 		table[index].intercepted = 0;
 		table[index].monitored = 0;
 		table[index].listcount = 0;
-		INIT_LIST_HEAD (&table[i].my_list);
+		INIT_LIST_HEAD (&table[index].my_list);
 	}
 
 	spin_unlock(&pidlist_lock);
